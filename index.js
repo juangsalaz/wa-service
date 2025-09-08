@@ -1,0 +1,127 @@
+const express = require('express');
+const qrcode = require('qrcode-terminal');
+const puppeteer = require('puppeteer');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+
+const PORT = process.env.PORT || 3001;
+const API_KEY = process.env.API_KEY || 'jfskljfskfhsfsdf23423424';
+
+const app = express();
+app.use(express.json({ limit: '4mb' }));
+
+const client = new Client({
+  authStrategy: new LocalAuth({ clientId: 'kirim-wa' }),
+  puppeteer: {
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: puppeteer.executablePath(),
+  },
+  webVersionCache: { type: 'local' },
+});
+
+let isReady = false;
+
+// QR login pertama kali
+client.on('qr', qr => {
+  console.log('Scan QR berikut untuk login:');
+  qrcode.generate(qr, { small: true });
+});
+client.on('authenticated', () => console.log('✅ Authenticated'));
+client.on('auth_failure', m => console.error('❌ Auth failure:', m));
+client.on('loading_screen', (p, m) => console.log(`⏳ Loading ${p}% - ${m}`));
+client.on('ready', () => { isReady = true; console.log('✅ WhatsApp siap!'); });
+client.on('disconnected', r => { console.warn('⚠️ Disconnected:', r); isReady = false; });
+
+client.initialize().catch(e => console.error('Init error:', e));
+
+/* ----------------- Resolver nama grup dgn cache sederhana ----------------- */
+const groupCache = new Map(); // key: nameLower -> { id, ts }
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 jam
+
+async function resolveGroupIdByName(name) {
+  if (!name) return null;
+  const key = name.toLowerCase().trim();
+
+  // Cache hit?
+  const hit = groupCache.get(key);
+  if (hit && (Date.now() - hit.ts) < CACHE_TTL_MS) return hit.id;
+
+  // Fetch semua chat grup
+  const chats = await client.getChats();
+  const groups = chats.filter(c => c.isGroup);
+
+  // Prioritas pencocokan: exact -> case-insensitive -> contains
+  const exact = groups.find(g => g.name === name);
+  const iexact = exact ? null : groups.find(g => g.name.toLowerCase() === key);
+  const contains = (exact || iexact) ? null : groups.find(g => g.name.toLowerCase().includes(key));
+
+  const target = exact || iexact || contains || null;
+  if (target) {
+    groupCache.set(key, { id: target.id._serialized, ts: Date.now() });
+    return target.id._serialized;
+  }
+  return null;
+}
+
+// Bantu tampilkan rekomendasi kalau tidak ketemu
+async function listGroupSuggestions(part) {
+  const key = (part || '').toLowerCase().trim();
+  const chats = await client.getChats();
+  const groups = chats.filter(c => c.isGroup);
+  const filtered = key ? groups.filter(g => g.name.toLowerCase().includes(key)) : groups;
+  return filtered.slice(0, 20).map(g => g.name);
+}
+
+/* ------------------------------ Middleware API Key ------------------------------ */
+function requireApiKey(req, res, next) {
+  if ((req.headers['x-api-key'] || '') !== API_KEY) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+  next();
+}
+
+/* ----------------------------------- Routes ----------------------------------- */
+app.get('/health', (_req, res) => res.json({ ok: true, ready: isReady }));
+
+// Body:
+// {
+//   "groupName": "Pengajian SGN",
+//   "text": "Isi pesan",
+//   "base64Files": [{"mime":"image/png","data":"iVBOR...","filename":"rekap.png","caption":"Rekap"}]
+// }
+app.post('/send-group', requireApiKey, async (req, res) => {
+  if (!isReady) return res.status(503).json({ ok: false, error: 'whatsapp not ready' });
+
+  const { groupName, text, base64Files = [] } = req.body || {};
+  if (!groupName || !(text || base64Files.length)) {
+    return res.status(400).json({ ok: false, error: 'groupName dan text/base64Files wajib diisi' });
+  }
+
+  try {
+    const groupId = await resolveGroupIdByName(groupName);
+    if (!groupId) {
+      const suggestions = await listGroupSuggestions(groupName);
+      return res.status(404).json({
+        ok: false,
+        error: `Grup "${groupName}" tidak ditemukan`,
+        suggestions,
+      });
+    }
+
+    if (text && text.trim()) {
+      await client.sendMessage(groupId, text);
+    }
+
+    for (const f of base64Files) {
+      const media = new MessageMedia(f.mime, f.data, f.filename || 'file');
+      await client.sendMessage(groupId, media, { caption: f.caption || '' });
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.listen(PORT, () => console.log(`WA service listening on :${PORT}`));
