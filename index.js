@@ -72,6 +72,29 @@ async function listGroupSuggestions(part) {
   return filtered.slice(0, 20).map(g => g.name);
 }
 
+// --- Helper nomor pribadi ---
+function normalizePhoneToE164Indo(raw) {
+  if (!raw) return null;
+  let s = String(raw).replace(/[^\d+]/g, ''); // buang spasi, tanda
+  if (s.startsWith('+')) s = s.slice(1);
+  if (s.startsWith('0')) s = '62' + s.slice(1);
+  // kalau sudah 62... biarkan
+  if (!/^\d{8,15}$/.test(s)) return null; // panjang wajar
+  return s; // tanpa '+'
+}
+
+async function resolveWhatsAppId(phone) {
+  // return: '628xxxx@c.us' atau null kalau tidak punya WA
+  const e164 = normalizePhoneToE164Indo(phone);
+  if (!e164) return null;
+  try {
+    const numberInfo = await client.getNumberId(e164);
+    return numberInfo ? numberInfo._serialized : null; // contoh: 628xxx@c.us
+  } catch {
+    return null;
+  }
+}
+
 /* ------------------------------ Middleware API Key ------------------------------ */
 function requireApiKey(req, res, next) {
   if ((req.headers['x-api-key'] || '') !== API_KEY) {
@@ -123,5 +146,61 @@ app.post('/send-group', requireApiKey, async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+app.post('/send-personal', requireApiKey, async (req, res) => {
+  if (!isReady) return res.status(503).json({ ok: false, error: 'whatsapp not ready' });
+
+  const { phone, phones, text, base64Files = [], validateOnly = false } = req.body || {};
+  let targets = [];
+
+  if (Array.isArray(phones) && phones.length) targets = phones;
+  else if (phone) targets = [phone];
+
+  if (!targets.length) {
+    return res.status(400).json({ ok: false, error: 'phone atau phones wajib diisi' });
+  }
+  if (!validateOnly && !(text || (base64Files && base64Files.length))) {
+    return res.status(400).json({ ok: false, error: 'text atau base64Files wajib diisi untuk pengiriman' });
+  }
+
+  const results = [];
+  for (const p of targets) {
+    const normalized = normalizePhoneToE164Indo(p);
+    if (!normalized) {
+      results.push({ to: p, ok: false, error: 'nomor tidak valid' });
+      continue;
+    }
+
+    const waId = await resolveWhatsAppId(normalized);
+    if (!waId) {
+      results.push({ to: normalized, ok: false, error: 'nomor tidak terdaftar di WhatsApp' });
+      continue;
+    }
+
+    if (validateOnly) {
+      results.push({ to: normalized, waId, ok: true, validated: true });
+      continue;
+    }
+
+    try {
+      if (text && text.trim()) {
+        await client.sendMessage(waId, text);
+      }
+      for (const f of base64Files) {
+        const media = new MessageMedia(f.mime, f.data, f.filename || 'file');
+        await client.sendMessage(waId, media, { caption: f.caption || '' });
+      }
+      results.push({ to: normalized, waId, ok: true });
+      // throttle ringan agar aman dari rate limit
+      await new Promise(r => setTimeout(r, 400));
+    } catch (e) {
+      results.push({ to: normalized, waId, ok: false, error: e.message });
+    }
+  }
+
+  const okAny = results.some(r => r.ok);
+  res.status(okAny ? 200 : 400).json({ ok: okAny, results });
+});
+
 
 app.listen(PORT, () => console.log(`WA service listening on :${PORT}`));
