@@ -16,10 +16,15 @@ const client = new Client({
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
     executablePath: puppeteer.executablePath(),
   },
-  webVersionCache: { type: 'local' },
+  webVersionCache: { type: 'none' },
 });
 
 let isReady = false;
+
+client.on('change_state', (state) => {
+  console.log('🔄 State:', state);
+  isReady = (state === 'CONNECTED');
+});
 
 // QR login pertama kali
 client.on('qr', qr => {
@@ -104,7 +109,40 @@ function requireApiKey(req, res, next) {
 }
 
 /* ----------------------------------- Routes ----------------------------------- */
-app.get('/health', (_req, res) => res.json({ ok: true, ready: isReady }));
+app.get('/health', async (_req, res) => {
+  let state = 'UNKNOWN';
+  try { state = await client.getState(); } catch {}
+  res.json({ ok: true, ready: isReady, state });
+});
+
+app.get('/state', async (_req, res) => {
+  try {
+    const state = await client.getState();
+    return res.json({ ok: true, state, ready: isReady });
+  } catch (e) {
+    return res.status(503).json({ ok: false, error: e.message, ready: isReady });
+  }
+});
+
+app.post('/reinit', requireApiKey, async (req, res) => {
+  try {
+    const state = await client.getState().catch(() => null);
+    if (state === 'CONNECTED' && isReady) {
+      return res.json({ ok: true, message: 'already connected', state });
+    }
+    console.log('♻️ Reinitializing WhatsApp client...');
+    isReady = false;
+    await client.destroy();
+    await new Promise(r => setTimeout(r, 500));
+    client.initialize();
+    return res.json({ ok: true, message: 'reinitializing' });
+  } catch (e) {
+    console.error('reinit error:', e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+
 
 // Body:
 // {
