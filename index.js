@@ -13,17 +13,22 @@ const client = new Client({
   authStrategy: new LocalAuth({ clientId: 'kirim-wa' }),
   puppeteer: {
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--single-process',
+    ],
     executablePath: puppeteer.executablePath(),
   },
-  webVersionCache: { type: 'none' },
+  webVersionCache: { type: 'local' },
 });
 
 let isReady = false;
 
-client.on('change_state', (state) => {
+client.on('change_state', state => {
   console.log('🔄 State:', state);
-  isReady = (state === 'CONNECTED');
 });
 
 // QR login pertama kali
@@ -34,8 +39,17 @@ client.on('qr', qr => {
 client.on('authenticated', () => console.log('✅ Authenticated'));
 client.on('auth_failure', m => console.error('❌ Auth failure:', m));
 client.on('loading_screen', (p, m) => console.log(`⏳ Loading ${p}% - ${m}`));
-client.on('ready', () => { isReady = true; console.log('✅ WhatsApp siap!'); });
-client.on('disconnected', r => { console.warn('⚠️ Disconnected:', r); isReady = false; });
+
+client.on('ready', () => {
+  isReady = true;
+  console.log('✅ WhatsApp siap!');
+});
+
+client.on('disconnected', reason => {
+  isReady = false;
+  console.warn('⚠️ Disconnected:', reason);
+});
+
 
 client.initialize().catch(e => console.error('Init error:', e));
 
@@ -127,17 +141,17 @@ app.get('/state', async (_req, res) => {
 app.post('/reinit', requireApiKey, async (req, res) => {
   try {
     const state = await client.getState().catch(() => null);
-    if (state === 'CONNECTED' && isReady) {
-      return res.json({ ok: true, message: 'already connected', state });
+
+    if (state === 'CONNECTED') {
+      return res.json({ ok: true, message: 'already connected' });
     }
-    console.log('♻️ Reinitializing WhatsApp client...');
+
+    console.log('♻️ Soft reinitialize...');
     isReady = false;
-    await client.destroy();
-    await new Promise(r => setTimeout(r, 500));
-    client.initialize();
-    return res.json({ ok: true, message: 'reinitializing' });
+    client.initialize(); // TANPA destroy
+
+    return res.json({ ok: true });
   } catch (e) {
-    console.error('reinit error:', e);
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
