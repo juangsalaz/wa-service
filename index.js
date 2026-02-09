@@ -10,19 +10,23 @@ const app = express();
 app.use(express.json({ limit: '4mb' }));
 
 const client = new Client({
-  authStrategy: new LocalAuth({ clientId: 'session-kirim-wa' }),
+  authStrategy: new LocalAuth({
+    clientId: 'kirim-wa'
+  }),
   puppeteer: {
     headless: true,
+    executablePath: puppeteer.executablePath(),
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--single-process',
-    ],
-    executablePath: puppeteer.executablePath(),
+      '--single-process'
+    ]
   },
-  webVersionCache: { type: 'local' },
+
+  // ⬇⬇⬇ INI PENTING
+  markOnlineOnConnect: false
 });
 
 let isReady = false;
