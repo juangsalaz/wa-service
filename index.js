@@ -10,7 +10,7 @@ const app = express();
 app.use(express.json({ limit: '4mb' }));
 
 const client = new Client({
-  authStrategy: new LocalAuth({ clientId: 'kirim-wa' }),
+  authStrategy: new LocalAuth({ clientId: 'session-kirim-wa' }),
   puppeteer: {
     headless: true,
     args: [
