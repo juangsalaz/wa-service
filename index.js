@@ -21,7 +21,8 @@ const client = new Client({
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--single-process'
+      '--single-process',
+      '--no-zygote'
     ]
   },
 
@@ -49,10 +50,20 @@ client.on('ready', () => {
   console.log('✅ WhatsApp siap!');
 });
 
-client.on('disconnected', reason => {
+client.on('disconnected', async (reason) => {
+  console.warn('⚠️ WA disconnected:', reason);
   isReady = false;
-  console.warn('⚠️ Disconnected:', reason);
+
+  try {
+    await client.destroy();
+  } catch {}
+
+  setTimeout(() => {
+    console.log('🔄 Re-initialize WA...');
+    client.initialize();
+  }, 5000);
 });
+
 
 
 client.initialize().catch(e => console.error('Init error:', e));
@@ -128,9 +139,20 @@ function requireApiKey(req, res, next) {
 
 /* ----------------------------------- Routes ----------------------------------- */
 app.get('/health', async (_req, res) => {
-  let state = 'UNKNOWN';
-  try { state = await client.getState(); } catch {}
-  res.json({ ok: true, ready: isReady, state });
+  try {
+    const state = await client.getState();
+    return res.json({
+      ok: true,
+      ready: state === 'CONNECTED',
+      state
+    });
+  } catch (e) {
+    return res.json({
+      ok: false,
+      ready: false,
+      state: 'DISCONNECTED'
+    });
+  }
 });
 
 app.get('/state', async (_req, res) => {
