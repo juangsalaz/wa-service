@@ -191,7 +191,22 @@ app.post('/reinit', requireApiKey, async (req, res) => {
 //   "base64Files": [{"mime":"image/png","data":"iVBOR...","filename":"rekap.png","caption":"Rekap"}]
 // }
 app.post('/send-group', requireApiKey, async (req, res) => {
-  if (!isReady) return res.status(503).json({ ok: false, error: 'whatsapp not ready' });
+ // if (!isReady) return res.status(503).json({ ok: false, error: 'whatsapp not ready' });
+
+  try {
+    const state = await client.getState();
+    if (state !== 'CONNECTED') {
+      return res.status(503).json({
+        ok: false,
+        error: 'whatsapp not connected'
+      });
+    }
+  } catch {
+    return res.status(503).json({
+      ok: false,
+      error: 'whatsapp not available'
+    });
+  }
 
   const { groupName, text, base64Files = [] } = req.body || {};
   if (!groupName || !(text || base64Files.length)) {
@@ -226,7 +241,22 @@ app.post('/send-group', requireApiKey, async (req, res) => {
 });
 
 app.post('/send-personal', requireApiKey, async (req, res) => {
-  if (!isReady) return res.status(503).json({ ok: false, error: 'whatsapp not ready' });
+  // if (!isReady) return res.status(503).json({ ok: false, error: 'whatsapp not ready' });
+
+  try {
+    const state = await client.getState();
+    if (state !== 'CONNECTED') {
+      return res.status(503).json({
+        ok: false,
+        error: 'whatsapp not connected'
+      });
+    }
+  } catch {
+    return res.status(503).json({
+      ok: false,
+      error: 'whatsapp not available'
+    });
+  }
 
   const { phone, phones, text, base64Files = [], validateOnly = false } = req.body || {};
   let targets = [];
