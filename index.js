@@ -50,9 +50,14 @@ client.on('ready', () => {
   console.log('✅ WhatsApp siap!');
 });
 
+let isReinitializing = false;
+
 client.on('disconnected', async (reason) => {
   console.warn('⚠️ WA disconnected:', reason);
   isReady = false;
+
+  if (isReinitializing) return;
+  isReinitializing = true;
 
   try {
     await client.destroy();
@@ -61,8 +66,10 @@ client.on('disconnected', async (reason) => {
   setTimeout(() => {
     console.log('🔄 Re-initialize WA...');
     client.initialize();
+    isReinitializing = false;
   }, 5000);
 });
+
 
 
 
@@ -164,23 +171,23 @@ app.get('/state', async (_req, res) => {
   }
 });
 
-app.post('/reinit', requireApiKey, async (req, res) => {
-  try {
-    const state = await client.getState().catch(() => null);
+// app.post('/reinit', requireApiKey, async (req, res) => {
+//   try {
+//     const state = await client.getState().catch(() => null);
 
-    if (state === 'CONNECTED') {
-      return res.json({ ok: true, message: 'already connected' });
-    }
+//     if (state === 'CONNECTED') {
+//       return res.json({ ok: true, message: 'already connected' });
+//     }
 
-    console.log('♻️ Soft reinitialize...');
-    isReady = false;
-    client.initialize(); // TANPA destroy
+//     console.log('♻️ Soft reinitialize...');
+//     isReady = false;
+//     client.initialize(); // TANPA destroy
 
-    return res.json({ ok: true });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
+//     return res.json({ ok: true });
+//   } catch (e) {
+//     return res.status(500).json({ ok: false, error: e.message });
+//   }
+// });
 
 
 
